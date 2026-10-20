@@ -1,0 +1,26 @@
+{
+  "name": "vandelay-services",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Vandelay Industries insurance APIs (Customers, Policies, Claims, Payments, Vendors) backed by Postgres, for Postman demos and classroom labs.",
+  "scripts": {
+    "start": "bun src/server.ts",
+    "dev": "bun --watch src/server.ts",
+    "seed:sql": "bun src/seed/dump.ts > db/seed.sql",
+    "test": "bun test tests/",
+    "typecheck": "tsc --noEmit"
+  },
+  "main": "./src/server.ts",
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "hono": "^4.6.0",
+    "pg": "^8.13.0",
+    "yaml": "^2.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,650 @@
+openapi: 3.0.3
+info:
+  title: Vandelay Vendors API
+  version: 1.0.0
+  description: |
+    Directory and work-order management for Vandelay's repair, tow, rental, glass, and appraisal partners.
+
+    Use this API to find in-network vendors near a loss location, review vendor details and ratings,
+    and manage the **work orders** vendors perform against claims (see the Claims API assignments).
+    ### Authentication and rate limits
+    - Send `Authorization: Bearer <token>`; see `bearerAuth` for the token format and personas.
+    - Each token is limited to 600 requests per minute. Responses include `X-RateLimit-Limit` and `X-RateLimit-Remaining`;
+      over the limit you receive `429` with `Retry-After`.
+    - A `POST` retried with the same `Idempotency-Key` and body replays the original response and adds `Idempotent-Replayed: true`.
+    - No scopes are required: any valid token can call every operation.
+    - A work order here and an assignment in the Claims API are the same engagement: assigning a vendor to a claim creates both, and their statuses stay in sync.
+  contact:
+    name: Vandelay API Platform Team
+    email: api-platform@vandelay-industries.example
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.vandelay-industries.example
+    description: Production
+  - url: https://api.staging.vandelay-industries.example
+    description: Staging
+security:
+  - bearerAuth: []
+tags:
+  - name: Vendors
+    description: Vendor directory and profiles.
+  - name: Work Orders
+    description: Work performed by vendors for claims.
+paths:
+  /vendors/v1/vendors:
+    get:
+      tags: [Vendors]
+      operationId: listVendors
+      summary: Search vendors
+      description: Find vendors by service type and proximity. Results are sorted by distance when `postalCode` is supplied.
+      parameters:
+        - name: type
+          in: query
+          description: Vendor service type.
+          schema: { $ref: '#/components/schemas/VendorType' }
+          example: repair
+        - name: postalCode
+          in: query
+          description: Center the search on this postal code.
+          schema: { type: string }
+          example: '28203'
+        - name: radiusMiles
+          in: query
+          description: Search radius in miles (requires `postalCode`).
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+          example: 25
+        - name: inNetwork
+          in: query
+          description: Only return preferred-network vendors.
+          schema: { type: boolean, default: true }
+          example: true
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Matching vendors.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VendorList' }
+              examples:
+                nearbyRepair:
+                  value:
+                    data:
+                      - id: ven_4417
+                        name: Bayview Collision & Auto Body
+                        type: repair
+                        inNetwork: true
+                        rating: 4.8
+                        distanceMiles: 0.2
+                        phone: '+17045550199'
+                        address: { addressLine1: 1215 S Tryon St, city: Charlotte, state: NC, postalCode: '28203', country: US }
+                        status: active
+                      - id: ven_4502
+                        name: Embarcadero Auto Works
+                        type: repair
+                        inNetwork: true
+                        rating: 4.6
+                        distanceMiles: 1.6
+                        phone: '+17045550123'
+                        address: { addressLine1: 425 W Trade St, city: Charlotte, state: NC, postalCode: '28202', country: US }
+                        status: active
+                      - id: ven_4236
+                        name: SouthPark Collision Center
+                        type: repair
+                        inNetwork: true
+                        rating: 4.4
+                        distanceMiles: 2.2
+                        phone: '+17045550174'
+                        address: { addressLine1: 4500 Park Rd, city: Charlotte, state: NC, postalCode: '28209', country: US }
+                        status: active
+                      - id: ven_4128
+                        name: Queen City Body & Paint
+                        type: repair
+                        inNetwork: true
+                        rating: 4.5
+                        distanceMiles: 3.7
+                        phone: '+17045550161'
+                        address: { addressLine1: 3100 N Davidson St, city: Charlotte, state: NC, postalCode: '28206', country: US }
+                        status: active
+                    nextCursor: null
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [Vendors]
+      operationId: createVendor
+      summary: Onboard a vendor
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VendorCreate' }
+            examples:
+              towCompany:
+                value:
+                  name: Queen City Towing & Transport
+                  type: tow
+                  taxId: 56-1234567
+                  phone: '+17045550111'
+                  email: dispatch@queencitytowing.example.com
+                  address: { addressLine1: 1200 N Davidson St, city: Charlotte, state: NC, postalCode: '28206', country: US }
+                  serviceAreaPostalCodes: ['28202', '28203', '28206']
+                  inNetwork: true
+      responses:
+        '201':
+          description: Vendor created in `pending` status until verification completes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vendor' }
+              examples:
+                created:
+                  value:
+                    id: ven_5100
+                    name: Queen City Towing & Transport
+                    type: tow
+                    inNetwork: true
+                    phone: '+17045550111'
+                    email: dispatch@queencitytowing.example.com
+                    address: { addressLine1: 1200 N Davidson St, city: Charlotte, state: NC, postalCode: '28206', country: US }
+                    serviceAreaPostalCodes: ['28202', '28203', '28206']
+                    status: pending
+                    createdAt: '2026-10-05T12:00:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /vendors/v1/vendors/{vendorId}:
+    parameters:
+      - $ref: '#/components/parameters/VendorId'
+    get:
+      tags: [Vendors]
+      operationId: getVendor
+      summary: Get a vendor
+      responses:
+        '200':
+          description: The vendor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vendor' }
+              examples:
+                vendor:
+                  value:
+                    id: ven_4417
+                    name: Bayview Collision & Auto Body
+                    type: repair
+                    inNetwork: true
+                    rating: 4.8
+                    phone: '+17045550199'
+                    email: estimates@bayviewcollision.example.com
+                    address: { addressLine1: 1215 S Tryon St, city: Charlotte, state: NC, postalCode: '28203', country: US }
+                    serviceAreaPostalCodes: ['28202', '28203', '28204']
+                    status: active
+                    createdAt: '2022-01-18T09:00:00Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Vendors]
+      operationId: updateVendor
+      summary: Update a vendor
+      description: Suspending or terminating a vendor also removes it from the preferred network (`inNetwork` becomes `false`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VendorUpdate' }
+            examples:
+              suspend:
+                value: { status: suspended, inNetwork: false }
+      responses:
+        '200':
+          description: Updated vendor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vendor' }
+              examples:
+                updated:
+                  value:
+                    id: ven_4417
+                    name: Bayview Collision & Auto Body
+                    type: repair
+                    inNetwork: false
+                    phone: '+17045550199'
+                    address: { addressLine1: 1215 S Tryon St, city: Charlotte, state: NC, postalCode: '28203', country: US }
+                    status: suspended
+                    createdAt: '2022-01-18T09:00:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /vendors/v1/work-orders:
+    get:
+      tags: [Work Orders]
+      operationId: listWorkOrders
+      summary: List work orders
+      parameters:
+        - name: vendorId
+          in: query
+          description: Filter by vendor.
+          schema: { type: string }
+          example: ven_4417
+        - name: claimId
+          in: query
+          description: Filter by claim.
+          schema: { type: string }
+          example: clm_2026-000417
+        - name: status
+          in: query
+          description: Filter by status.
+          schema: { $ref: '#/components/schemas/WorkOrderStatus' }
+          example: in_progress
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Work orders.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/WorkOrder' }
+                  nextCursor: { type: string, nullable: true }
+              examples:
+                inProgress:
+                  value:
+                    data:
+                      - id: wo_9001
+                        claimId: clm_2026-000417
+                        vendorId: ven_4417
+                        type: repair
+                        status: in_progress
+                        estimate: { amount: 4350.00, currency: USD }
+                        scheduledFor: '2026-10-07T09:00:00-04:00'
+                        createdAt: '2026-10-03T09:30:00Z'
+                        updatedAt: '2026-10-07T09:05:00Z'
+                    nextCursor: null
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Work Orders]
+      operationId: createWorkOrder
+      summary: Create a work order
+      description: Issues a work order to a vendor for a claim. The vendor must be `active` and serve the loss location. The same engagement appears in the Claims API as an assignment.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkOrderCreate' }
+            examples:
+              repair:
+                value:
+                  claimId: clm_2026-000417
+                  vendorId: ven_4417
+                  type: repair
+                  scheduledFor: '2026-10-07T09:00:00-04:00'
+                  instructions: Replace rear bumper cover and repair trunk lid. Submit supplement for hidden damage.
+      responses:
+        '201':
+          description: Work order created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkOrder' }
+              examples:
+                created:
+                  value:
+                    id: wo_9001
+                    claimId: clm_2026-000417
+                    vendorId: ven_4417
+                    type: repair
+                    status: issued
+                    scheduledFor: '2026-10-07T09:00:00-04:00'
+                    instructions: Replace rear bumper cover and repair trunk lid. Submit supplement for hidden damage.
+                    createdAt: '2026-10-03T09:30:00Z'
+                    updatedAt: '2026-10-03T09:30:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Vendor is not active or does not serve the loss location.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+              examples:
+                outOfArea:
+                  value:
+                    type: https://api.vandelay-industries.example/problems/vendor-out-of-area
+                    title: Vendor does not serve this area
+                    status: 422
+                    detail: Vendor ven_4417 does not serve postal code 28277.
+                    traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  /vendors/v1/work-orders/{workOrderId}:
+    parameters:
+      - name: workOrderId
+        in: path
+        required: true
+        description: Unique work order ID.
+        schema: { type: string, pattern: '^wo_[0-9]+$' }
+        example: wo_9001
+    get:
+      tags: [Work Orders]
+      operationId: getWorkOrder
+      summary: Get a work order
+      responses:
+        '200':
+          description: The work order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkOrder' }
+              examples:
+                workOrder:
+                  value:
+                    id: wo_9001
+                    claimId: clm_2026-000417
+                    vendorId: ven_4417
+                    type: repair
+                    status: in_progress
+                    estimate: { amount: 4350.00, currency: USD }
+                    scheduledFor: '2026-10-07T09:00:00-04:00'
+                    createdAt: '2026-10-03T09:30:00Z'
+                    updatedAt: '2026-10-07T09:05:00Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Work Orders]
+      operationId: updateWorkOrder
+      summary: Update a work order
+      description: Vendors use this endpoint to accept, schedule, submit estimates, and complete work. Status moves `issued` to `accepted` to `in_progress` to `completed` (or `declined` or `cancelled`), and an estimate can be submitted once the work order is accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkOrderUpdate' }
+            examples:
+              submitEstimate:
+                value:
+                  status: in_progress
+                  estimate: { amount: 4350.00, currency: USD }
+                  notes: Parts on order; estimated 3 business days.
+      responses:
+        '200':
+          description: Updated work order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkOrder' }
+              examples:
+                updated:
+                  value:
+                    id: wo_9001
+                    claimId: clm_2026-000417
+                    vendorId: ven_4417
+                    type: repair
+                    status: in_progress
+                    estimate: { amount: 4350.00, currency: USD }
+                    scheduledFor: '2026-10-07T09:00:00-04:00'
+                    notes: Parts on order; estimated 3 business days.
+                    createdAt: '2026-10-03T09:30:00Z'
+                    updatedAt: '2026-10-07T09:05:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        Static opaque bearer token. These are random strings, **not JWTs**, so there are no claims to decode
+        (`bearerFormat` is informational). Send `Authorization: Bearer <token>`.
+
+        Tokens look like `vdl_<environment>_<persona>_<random>` and are issued by the API owner, one per persona and
+        per environment (Prod and Test use different tokens). The server maps each token to a persona with fixed scopes:
+
+        | Persona | Acts as | Scopes |
+        | --- | --- | --- |
+        | agent | `agt_claims_assistant` (AI agent) | none |
+        | adjuster | `adj_220` (Priya Raman) | `customers:pii:read`, `payments:write` |
+        | supervisor | `adj_105` (Denise Okafor) | `customers:pii:read`, `customers:delete`, `payments:write`, `payments:approve` |
+        | customer | `cus_01HX9K` (Marisol Vega) | none |
+
+        A missing or unrecognized token returns `401`; a recognized token that lacks a required scope returns `403`.
+        Agents obtain access through Passport references rather than raw tokens.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      example: 20
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous response's `nextCursor`.
+      schema: { type: string }
+      example: eyJvIjoyMH0
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: 'Unique key (UUID recommended) so retries do not create duplicate resources. Retrying with the same key and body returns the original response with `Idempotent-Replayed: true`; reusing a key with a different body is rejected.'
+      schema: { type: string }
+      example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+    VendorId:
+      name: vendorId
+      in: path
+      required: true
+      description: Unique vendor ID.
+      schema: { type: string, pattern: '^ven_[0-9]+$' }
+      example: ven_4417
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            validation:
+              value:
+                type: https://api.vandelay-industries.example/problems/validation-error
+                title: Validation failed
+                status: 400
+                detail: Request body failed validation.
+                errors:
+                  - field: example
+                    message: is required
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            unauthorized:
+              value:
+                type: https://api.vandelay-industries.example/problems/unauthorized
+                title: Unauthorized
+                status: 401
+                detail: Bearer token is missing, expired, or invalid.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Forbidden:
+      description: The caller lacks the required scope.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            forbidden:
+              value:
+                type: https://api.vandelay-industries.example/problems/forbidden
+                title: Forbidden
+                status: 403
+                detail: Token is missing the required scope.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    NotFound:
+      description: Resource not found.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            notFound:
+              value:
+                type: https://api.vandelay-industries.example/problems/not-found
+                title: Resource not found
+                status: 404
+                detail: No resource exists with the given ID.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Conflict:
+      description: Conflict with current resource state or duplicate idempotency key.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            conflict:
+              value:
+                type: https://api.vandelay-industries.example/problems/conflict
+                title: Conflict
+                status: 409
+                detail: The request conflicts with the current state of the resource.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer }
+          example: 30
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            rateLimited:
+              value:
+                type: https://api.vandelay-industries.example/problems/rate-limited
+                title: Too many requests
+                status: 429
+                detail: Rate limit of 600 requests per minute exceeded.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  schemas:
+    VendorType:
+      type: string
+      enum: [repair, tow, rental, glass, appraisal]
+    WorkOrderStatus:
+      type: string
+      enum: [issued, accepted, declined, in_progress, completed, cancelled]
+    Vendor:
+      type: object
+      required: [id, name, type, status]
+      properties:
+        id: { type: string, example: ven_4417 }
+        name: { type: string, example: Bayview Collision & Auto Body }
+        type: { $ref: '#/components/schemas/VendorType' }
+        inNetwork: { type: boolean }
+        rating: { type: number, format: float, minimum: 0, maximum: 5, example: 4.8 }
+        distanceMiles: { type: number, format: float, description: Present when searching by `postalCode`. }
+        phone: { type: string, example: '+17045550199' }
+        email: { type: string, format: email }
+        address: { $ref: '#/components/schemas/Address' }
+        serviceAreaPostalCodes:
+          type: array
+          items: { type: string }
+        status: { type: string, enum: [pending, active, suspended, terminated] }
+        createdAt: { type: string, format: date-time }
+    VendorCreate:
+      type: object
+      required: [name, type, phone, email, address]
+      properties:
+        name: { type: string }
+        type: { $ref: '#/components/schemas/VendorType' }
+        taxId: { type: string }
+        phone: { type: string }
+        email: { type: string, format: email }
+        address: { $ref: '#/components/schemas/Address' }
+        serviceAreaPostalCodes:
+          type: array
+          items: { type: string }
+        inNetwork: { type: boolean, default: false }
+    VendorUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string, format: email }
+        inNetwork: { type: boolean }
+        status: { type: string, enum: [active, suspended, terminated] }
+    VendorList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Vendor' }
+        nextCursor: { type: string, nullable: true }
+    WorkOrder:
+      type: object
+      required: [id, claimId, vendorId, type, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, example: wo_9001 }
+        claimId: { type: string, example: clm_2026-000417 }
+        vendorId: { type: string, example: ven_4417 }
+        type: { $ref: '#/components/schemas/VendorType' }
+        status: { $ref: '#/components/schemas/WorkOrderStatus' }
+        estimate: { $ref: '#/components/schemas/Money' }
+        scheduledFor: { type: string, format: date-time }
+        instructions: { type: string }
+        notes: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    WorkOrderCreate:
+      type: object
+      required: [claimId, vendorId, type]
+      properties:
+        claimId: { type: string }
+        vendorId: { type: string }
+        type: { $ref: '#/components/schemas/VendorType' }
+        scheduledFor: { type: string, format: date-time }
+        instructions: { type: string }
+    WorkOrderUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        status: { $ref: '#/components/schemas/WorkOrderStatus' }
+        estimate: { $ref: '#/components/schemas/Money' }
+        scheduledFor: { type: string, format: date-time }
+        notes: { type: string }
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: number, format: double, example: 4350.00 }
+        currency: { type: string, minLength: 3, maxLength: 3, example: USD }
+    Address:
+      type: object
+      required: [addressLine1, city, state, postalCode, country]
+      properties:
+        addressLine1: { type: string, example: 129 W Trade St }
+        addressLine2: { type: string, example: Apt 5A }
+        city: { type: string, example: Charlotte }
+        state: { type: string, example: NC }
+        postalCode: { type: string, example: '28202' }
+        country: { type: string, example: US }
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+        traceId: { type: string }

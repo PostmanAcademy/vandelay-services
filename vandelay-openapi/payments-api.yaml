@@ -1,0 +1,699 @@
+openapi: 3.0.3
+info:
+  title: Vandelay Payments API
+  version: 1.0.0
+  description: |
+    Issue and track claim payments: settlements to customers, invoice payments to vendors, and refunds
+    of premiums or deductibles.
+
+    **Money movement rules**
+    - Every `POST` that creates a payment **requires** an `Idempotency-Key` header.
+    - Payments over the customer or vendor approval threshold enter `pending_approval` and must be approved
+      by a second user.
+    - Payment destinations are referenced by `paymentMethodId`; bank and card details are never accepted or
+      returned by this API.
+    ### Authentication and rate limits
+    - Send `Authorization: Bearer <token>`; see `bearerAuth` for the token format and personas.
+    - Each token is limited to 600 requests per minute. Responses include `X-RateLimit-Limit` and `X-RateLimit-Remaining`;
+      over the limit you receive `429` with `Retry-After`.
+    - A `POST` retried with the same `Idempotency-Key` and body replays the original response and adds `Idempotent-Replayed: true`.
+
+    ### Approval thresholds and settlement
+    - Creating a payment requires the `payments:write` scope (`403` otherwise); approving one requires `payments:approve`.
+    - Payments over **$10,000 to a customer** or **$25,000 to a vendor** enter `pending_approval`. All others start in `processing`.
+    - There is no real bank behind this API: a `processing` payment or refund becomes `completed` automatically after a short
+      settlement delay (5 seconds by default) and `completedAt` is set. When every approved amount on a claim has been paid, the
+      claim moves to `settled`.
+  contact:
+    name: Vandelay API Platform Team
+    email: api-platform@vandelay-industries.example
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.vandelay-industries.example
+    description: Production
+  - url: https://api.staging.vandelay-industries.example
+    description: Staging
+security:
+  - bearerAuth: []
+tags:
+  - name: Payments
+    description: Create, view, approve, and cancel payments.
+  - name: Payment Methods
+    description: Tokenized payout destinations.
+  - name: Refunds
+    description: Reverse or partially reverse completed payments.
+paths:
+  /payments/v1/payments:
+    get:
+      tags: [Payments]
+      operationId: listPayments
+      summary: List payments
+      parameters:
+        - name: claimId
+          in: query
+          description: Filter by claim.
+          schema: { type: string }
+          example: clm_2026-000417
+        - name: payeeId
+          in: query
+          description: Filter by payee (customer or vendor ID).
+          schema: { type: string }
+          example: cus_01HX9K
+        - name: status
+          in: query
+          description: Filter by status.
+          schema: { $ref: '#/components/schemas/PaymentStatus' }
+          example: completed
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Payments.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentList' }
+              examples:
+                forClaim:
+                  value:
+                    data:
+                      - id: pay_90311
+                        claimId: clm_2026-000417
+                        type: vendor_invoice
+                        payee: { type: vendor, id: ven_4417 }
+                        amount: { amount: 3850.00, currency: USD }
+                        status: completed
+                        method: ach
+                        createdAt: '2026-10-10T13:00:00Z'
+                        completedAt: '2026-10-12T08:00:00Z'
+                    nextCursor: null
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [Payments]
+      operationId: createPayment
+      summary: Create a payment
+      description: Creates a payment for an approved claim. The amount cannot exceed the claim's remaining approved balance (the estimate less the deductible, minus payments already made and refunded). Requires the `payments:write` scope. Payments over the approval threshold start in `pending_approval`; all others start in `processing`.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 'Unique key (UUID recommended). Retrying with the same key and body returns the original payment with `Idempotent-Replayed: true`; reusing the key with a different body returns `409`.'
+          schema: { type: string }
+          example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentCreate' }
+            examples:
+              customerSettlement:
+                summary: Settlement to the customer
+                value:
+                  claimId: clm_2026-000417
+                  type: settlement
+                  payee: { type: customer, id: cus_01HX9K }
+                  paymentMethodId: pm_3321
+                  amount: { amount: 850.00, currency: USD }
+                  memo: Total loss payout net of deductible.
+              vendorInvoice:
+                summary: Invoice payment to a repair vendor
+                value:
+                  claimId: clm_2026-000417
+                  type: vendor_invoice
+                  payee: { type: vendor, id: ven_4417 }
+                  paymentMethodId: pm_8802
+                  amount: { amount: 3850.00, currency: USD }
+                  invoiceNumber: BCA-2026-1182
+                  memo: Collision repair, invoice BCA-2026-1182.
+      responses:
+        '201':
+          description: Payment created.
+          headers:
+            Location:
+              description: URL of the new payment.
+              schema: { type: string }
+              example: /payments/pay_90311
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+              examples:
+                created:
+                  value:
+                    id: pay_90311
+                    claimId: clm_2026-000417
+                    type: vendor_invoice
+                    payee: { type: vendor, id: ven_4417 }
+                    paymentMethodId: pm_8802
+                    amount: { amount: 3850.00, currency: USD }
+                    status: processing
+                    method: ach
+                    invoiceNumber: BCA-2026-1182
+                    memo: Collision repair, invoice BCA-2026-1182.
+                    createdAt: '2026-10-10T13:00:00Z'
+                pendingApproval:
+                  summary: Large payment held for approval
+                  value:
+                    id: pay_90312
+                    claimId: clm_2026-000417
+                    type: settlement
+                    payee: { type: customer, id: cus_01HX9K }
+                    paymentMethodId: pm_3321
+                    amount: { amount: 25000.00, currency: USD }
+                    status: pending_approval
+                    method: ach
+                    createdAt: '2026-10-10T13:05:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Business rule violation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+              examples:
+                exceedsApproved:
+                  value:
+                    type: https://api.vandelay-industries.example/problems/exceeds-approved-amount
+                    title: Amount exceeds approved balance
+                    status: 422
+                    detail: Requested 9000.00 USD but only 4350.00 USD remains approved for claim clm_2026-000417.
+                    traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  /payments/v1/payments/{paymentId}:
+    parameters:
+      - $ref: '#/components/parameters/PaymentId'
+    get:
+      tags: [Payments]
+      operationId: getPayment
+      summary: Get a payment
+      responses:
+        '200':
+          description: The payment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+              examples:
+                completed:
+                  value:
+                    id: pay_90311
+                    claimId: clm_2026-000417
+                    type: vendor_invoice
+                    payee: { type: vendor, id: ven_4417 }
+                    paymentMethodId: pm_8802
+                    amount: { amount: 3850.00, currency: USD }
+                    status: completed
+                    method: ach
+                    invoiceNumber: BCA-2026-1182
+                    createdAt: '2026-10-10T13:00:00Z'
+                    completedAt: '2026-10-12T08:00:00Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /payments/v1/payments/{paymentId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/PaymentId'
+    post:
+      tags: [Payments]
+      operationId: approvePayment
+      summary: Approve a pending payment
+      description: Requires the `payments:approve` scope. The approver must differ from the creator.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment: { type: string }
+            examples:
+              approve:
+                value: { comment: Verified against approved settlement letter. }
+      responses:
+        '200':
+          description: Payment approved and queued for processing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+              examples:
+                approved:
+                  value:
+                    id: pay_90312
+                    claimId: clm_2026-000417
+                    type: settlement
+                    payee: { type: customer, id: cus_01HX9K }
+                    paymentMethodId: pm_3321
+                    amount: { amount: 25000.00, currency: USD }
+                    status: processing
+                    method: ach
+                    createdAt: '2026-10-10T13:05:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /payments/v1/payments/{paymentId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/PaymentId'
+    post:
+      tags: [Payments]
+      operationId: cancelPayment
+      summary: Cancel a payment
+      description: Only payments in `pending_approval` or `processing` (before bank submission) can be cancelled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, enum: [duplicate, incorrect_amount, incorrect_payee, claim_cancelled, other] }
+                comment: { type: string }
+            examples:
+              duplicate:
+                value: { reason: duplicate, comment: Duplicate of pay_90311. }
+      responses:
+        '200':
+          description: Payment cancelled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+              examples:
+                cancelled:
+                  value:
+                    id: pay_90313
+                    claimId: clm_2026-000417
+                    type: vendor_invoice
+                    payee: { type: vendor, id: ven_4417 }
+                    amount: { amount: 3850.00, currency: USD }
+                    status: cancelled
+                    method: ach
+                    createdAt: '2026-10-10T13:10:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /payments/v1/payments/{paymentId}/refunds:
+    parameters:
+      - $ref: '#/components/parameters/PaymentId'
+    get:
+      tags: [Refunds]
+      operationId: listPaymentRefunds
+      summary: List refunds for a payment
+      responses:
+        '200':
+          description: Refunds.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Refund' }
+              examples:
+                refunds:
+                  value:
+                    data:
+                      - id: ref_2001
+                        paymentId: pay_90311
+                        amount: { amount: 200.00, currency: USD }
+                        reason: overpayment
+                        status: completed
+                        createdAt: '2026-10-15T10:00:00Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Refunds]
+      operationId: createPaymentRefund
+      summary: Refund a payment
+      description: Only `completed` payments can be refunded, up to the amount not already refunded. The refund completes automatically after the settlement delay.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Unique key (UUID recommended).
+          schema: { type: string }
+          example: 0d9a9bd2-6f0b-4a59-8b5c-5a0f2d3a1c11
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefundCreate' }
+            examples:
+              partial:
+                value:
+                  amount: { amount: 200.00, currency: USD }
+                  reason: overpayment
+      responses:
+        '201':
+          description: Refund created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Refund' }
+              examples:
+                created:
+                  value:
+                    id: ref_2001
+                    paymentId: pay_90311
+                    amount: { amount: 200.00, currency: USD }
+                    reason: overpayment
+                    status: processing
+                    createdAt: '2026-10-15T10:00:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Refund exceeds the refundable balance.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+              examples:
+                exceedsBalance:
+                  value:
+                    type: https://api.vandelay-industries.example/problems/exceeds-refundable-balance
+                    title: Refund exceeds balance
+                    status: 422
+                    detail: Refundable balance on pay_90311 is 150.00 USD.
+                    traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  /payments/v1/payment-methods:
+    get:
+      tags: [Payment Methods]
+      operationId: listPaymentMethods
+      summary: List payment methods
+      description: Returns tokenized payout destinations for a payee. Account numbers are never returned; only the last four digits.
+      parameters:
+        - name: payeeId
+          in: query
+          required: true
+          description: Customer or vendor ID.
+          schema: { type: string }
+          example: cus_01HX9K
+      responses:
+        '200':
+          description: Payment methods.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PaymentMethod' }
+              examples:
+                methods:
+                  value:
+                    data:
+                      - id: pm_3321
+                        payeeId: cus_01HX9K
+                        type: bank_account
+                        label: Checking ending in 4321
+                        last4: '4321'
+                        bankName: First Example Bank
+                        isDefault: true
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Payment Methods]
+      operationId: createPaymentMethod
+      summary: Add a payment method
+      description: Registers a payout destination using a single-use `token` created by the Vandelay hosted payment form. Raw account numbers are never accepted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentMethodCreate' }
+            examples:
+              bank:
+                value:
+                  payeeId: cus_01HX9K
+                  type: bank_account
+                  token: tok_bank_1PqXyz2eZvKYlo2C
+                  isDefault: true
+      responses:
+        '201':
+          description: Payment method added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentMethod' }
+              examples:
+                created:
+                  value:
+                    id: pm_3321
+                    payeeId: cus_01HX9K
+                    type: bank_account
+                    label: Checking ending in 4321
+                    last4: '4321'
+                    bankName: First Example Bank
+                    isDefault: true
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        Static opaque bearer token. These are random strings, **not JWTs**, so there are no claims to decode
+        (`bearerFormat` is informational). Send `Authorization: Bearer <token>`.
+
+        Tokens look like `vdl_<environment>_<persona>_<random>` and are issued by the API owner, one per persona and
+        per environment (Prod and Test use different tokens). The server maps each token to a persona with fixed scopes:
+
+        | Persona | Acts as | Scopes |
+        | --- | --- | --- |
+        | agent | `agt_claims_assistant` (AI agent) | none |
+        | adjuster | `adj_220` (Priya Raman) | `customers:pii:read`, `payments:write` |
+        | supervisor | `adj_105` (Denise Okafor) | `customers:pii:read`, `customers:delete`, `payments:write`, `payments:approve` |
+        | customer | `cus_01HX9K` (Marisol Vega) | none |
+
+        A missing or unrecognized token returns `401`; a recognized token that lacks a required scope returns `403`.
+        Agents obtain access through Passport references rather than raw tokens.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      example: 20
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous response's `nextCursor`.
+      schema: { type: string }
+      example: eyJvIjoyMH0
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: 'Unique key (UUID recommended) so retries do not create duplicate resources. Retrying with the same key and body returns the original response with `Idempotent-Replayed: true`; reusing a key with a different body is rejected.'
+      schema: { type: string }
+      example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+    PaymentId:
+      name: paymentId
+      in: path
+      required: true
+      description: Unique payment ID.
+      schema: { type: string, pattern: '^pay_[0-9]+$' }
+      example: pay_90311
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            validation:
+              value:
+                type: https://api.vandelay-industries.example/problems/validation-error
+                title: Validation failed
+                status: 400
+                detail: Request body failed validation.
+                errors:
+                  - field: example
+                    message: is required
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            unauthorized:
+              value:
+                type: https://api.vandelay-industries.example/problems/unauthorized
+                title: Unauthorized
+                status: 401
+                detail: Bearer token is missing, expired, or invalid.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Forbidden:
+      description: The caller lacks the required scope.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            forbidden:
+              value:
+                type: https://api.vandelay-industries.example/problems/forbidden
+                title: Forbidden
+                status: 403
+                detail: Token is missing the required scope.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    NotFound:
+      description: Resource not found.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            notFound:
+              value:
+                type: https://api.vandelay-industries.example/problems/not-found
+                title: Resource not found
+                status: 404
+                detail: No resource exists with the given ID.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Conflict:
+      description: Conflict with current resource state or duplicate idempotency key.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            conflict:
+              value:
+                type: https://api.vandelay-industries.example/problems/conflict
+                title: Conflict
+                status: 409
+                detail: The request conflicts with the current state of the resource.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer }
+          example: 30
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            rateLimited:
+              value:
+                type: https://api.vandelay-industries.example/problems/rate-limited
+                title: Too many requests
+                status: 429
+                detail: Rate limit of 600 requests per minute exceeded.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  schemas:
+    PaymentStatus:
+      type: string
+      enum: [pending_approval, processing, completed, failed, cancelled, refunded]
+    Payee:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [customer, vendor] }
+        id: { type: string, example: cus_01HX9K }
+    Payment:
+      type: object
+      required: [id, claimId, type, payee, amount, status, createdAt]
+      properties:
+        id: { type: string, example: pay_90311 }
+        claimId: { type: string, example: clm_2026-000417 }
+        type: { type: string, enum: [settlement, vendor_invoice, rental_reimbursement, premium_refund] }
+        payee: { $ref: '#/components/schemas/Payee' }
+        paymentMethodId: { type: string, example: pm_3321 }
+        amount: { $ref: '#/components/schemas/Money' }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        method: { type: string, enum: [ach, check, card, wire] }
+        invoiceNumber: { type: string }
+        memo: { type: string }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+    PaymentCreate:
+      type: object
+      required: [claimId, type, payee, paymentMethodId, amount]
+      properties:
+        claimId: { type: string }
+        type: { type: string, enum: [settlement, vendor_invoice, rental_reimbursement, premium_refund] }
+        payee: { $ref: '#/components/schemas/Payee' }
+        paymentMethodId: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+        invoiceNumber: { type: string }
+        memo: { type: string, maxLength: 255 }
+    PaymentList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Payment' }
+        nextCursor: { type: string, nullable: true }
+    Refund:
+      type: object
+      required: [id, paymentId, amount, reason, status, createdAt]
+      properties:
+        id: { type: string, example: ref_2001 }
+        paymentId: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+        reason: { type: string, enum: [overpayment, duplicate, claim_reversed, other] }
+        status: { type: string, enum: [processing, completed, failed] }
+        createdAt: { type: string, format: date-time }
+    RefundCreate:
+      type: object
+      required: [amount, reason]
+      properties:
+        amount: { $ref: '#/components/schemas/Money' }
+        reason: { type: string, enum: [overpayment, duplicate, claim_reversed, other] }
+    PaymentMethod:
+      type: object
+      required: [id, payeeId, type, last4]
+      properties:
+        id: { type: string, example: pm_3321 }
+        payeeId: { type: string }
+        type: { type: string, enum: [bank_account, debit_card] }
+        label: { type: string }
+        last4: { type: string, minLength: 4, maxLength: 4 }
+        bankName: { type: string }
+        isDefault: { type: boolean }
+    PaymentMethodCreate:
+      type: object
+      required: [payeeId, type, token]
+      properties:
+        payeeId: { type: string }
+        type: { type: string, enum: [bank_account, debit_card] }
+        token: { type: string, description: Single-use token from the hosted payment form. }
+        isDefault: { type: boolean, default: false }
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: number, format: double, example: 4350.00 }
+        currency: { type: string, minLength: 3, maxLength: 3, example: USD }
+    Address:
+      type: object
+      required: [addressLine1, city, state, postalCode, country]
+      properties:
+        addressLine1: { type: string, example: 129 W Trade St }
+        addressLine2: { type: string, example: Apt 5A }
+        city: { type: string, example: Charlotte }
+        state: { type: string, example: NC }
+        postalCode: { type: string, example: '28202' }
+        country: { type: string, example: US }
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+        traceId: { type: string }

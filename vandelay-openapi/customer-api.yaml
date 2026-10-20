@@ -1,0 +1,591 @@
+openapi: 3.0.3
+info:
+  title: Vandelay Customer API
+  version: 1.0.0
+  description: |
+    Manage Vandelay Industries customer profiles, contact details, vehicles, and communication preferences.
+
+    This API returns **PII** (names, phone numbers, addresses, dates of birth). When called by an agent,
+    traffic should flow through the Fabric Gateway so PII-redaction plugins can protect downstream LLMs.
+    Sensitive fields are returned masked unless the caller holds the `customers:pii:read` scope.
+    ### Authentication and rate limits
+    - Send `Authorization: Bearer <token>`; see `bearerAuth` for the token format and personas.
+    - Each token is limited to 600 requests per minute. Responses include `X-RateLimit-Limit` and `X-RateLimit-Remaining`;
+      over the limit you receive `429` with `Retry-After`.
+    - A `POST` retried with the same `Idempotency-Key` and body replays the original response and adds `Idempotent-Replayed: true`.
+    - `customers:pii:read` unmasks `dateOfBirth`. `customers:delete` is required to deactivate a customer (`DELETE /customers/v1/customers/{customerId}`, otherwise `403`).
+  contact:
+    name: Vandelay API Platform Team
+    email: api-platform@vandelay-industries.example
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.vandelay-industries.example
+    description: Production
+  - url: https://api.staging.vandelay-industries.example
+    description: Staging
+security:
+  - bearerAuth: []
+tags:
+  - name: Customers
+    description: Customer profiles.
+  - name: Vehicles
+    description: Vehicles owned or driven by a customer.
+  - name: Preferences
+    description: Contact and notification preferences.
+paths:
+  /customers/v1/customers:
+    get:
+      tags: [Customers]
+      operationId: listCustomers
+      summary: Search customers
+      description: Search customers by email, phone, or last name. At least one filter is required.
+      parameters:
+        - name: email
+          in: query
+          description: Exact email match.
+          schema: { type: string, format: email }
+          example: marisol.vega@example.com
+        - name: phone
+          in: query
+          description: Phone number in E.164 format.
+          schema: { type: string }
+          example: '+14155550142'
+        - name: lastName
+          in: query
+          description: Case-insensitive last name prefix.
+          schema: { type: string }
+          example: Vega
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Matching customers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerList' }
+              examples:
+                byEmail:
+                  value:
+                    data:
+                      - id: cus_01HX9K
+                        firstName: Marisol
+                        lastName: Vega
+                        email: marisol.vega@example.com
+                        phone: '+14155550142'
+                        status: active
+                        createdAt: '2024-03-14T16:02:11Z'
+                        updatedAt: '2026-09-12T10:44:30Z'
+                    nextCursor: null
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [Customers]
+      operationId: createCustomer
+      summary: Create a customer
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomerCreate' }
+            examples:
+              newCustomer:
+                value:
+                  firstName: Marisol
+                  lastName: Vega
+                  email: marisol.vega@example.com
+                  phone: '+14155550142'
+                  dateOfBirth: '1988-06-21'
+                  address: { addressLine1: 129 W Trade St, addressLine2: Apt 5A, city: Charlotte, state: NC, postalCode: '28202', country: US }
+                  preferences: { contactMethod: sms, language: en, marketingOptIn: false }
+      responses:
+        '201':
+          description: Customer created.
+          headers:
+            Location:
+              description: URL of the new customer.
+              schema: { type: string }
+              example: /customers/cus_01HX9K
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+              examples:
+                created:
+                  value:
+                    id: cus_01HX9K
+                    firstName: Marisol
+                    lastName: Vega
+                    email: marisol.vega@example.com
+                    phone: '+14155550142'
+                    dateOfBirth: '1988-**-**'
+                    address: { addressLine1: 129 W Trade St, addressLine2: Apt 5A, city: Charlotte, state: NC, postalCode: '28202', country: US }
+                    status: active
+                    preferences: { contactMethod: sms, language: en, marketingOptIn: false }
+                    createdAt: '2024-03-14T16:02:11Z'
+                    updatedAt: '2024-03-14T16:02:11Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: A customer with this email already exists, or the `Idempotency-Key` was already used with a different request body.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+              examples:
+                duplicateEmail:
+                  value:
+                    type: https://api.vandelay-industries.example/problems/duplicate-customer
+                    title: Customer already exists
+                    status: 409
+                    detail: A customer with email marisol.vega@example.com already exists (cus_01HX9K).
+                    traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  /customers/v1/customers/{customerId}:
+    parameters:
+      - $ref: '#/components/parameters/CustomerId'
+    get:
+      tags: [Customers]
+      operationId: getCustomer
+      summary: Get a customer
+      responses:
+        '200':
+          description: The customer. Date of birth is masked without the `customers:pii:read` scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+              examples:
+                customer:
+                  value:
+                    id: cus_01HX9K
+                    firstName: Marisol
+                    lastName: Vega
+                    email: marisol.vega@example.com
+                    phone: '+14155550142'
+                    dateOfBirth: '1988-**-**'
+                    address: { addressLine1: 129 W Trade St, addressLine2: Apt 5A, city: Charlotte, state: NC, postalCode: '28202', country: US }
+                    status: active
+                    preferences: { contactMethod: sms, language: en, marketingOptIn: false }
+                    createdAt: '2024-03-14T16:02:11Z'
+                    updatedAt: '2026-09-12T10:44:30Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Customers]
+      operationId: updateCustomer
+      summary: Update a customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomerUpdate' }
+            examples:
+              newPhone:
+                value:
+                  phone: '+14155550177'
+                  address: { addressLine1: 400 S Tryon St, city: Charlotte, state: NC, postalCode: '28202', country: US }
+      responses:
+        '200':
+          description: Updated customer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+              examples:
+                updated:
+                  value:
+                    id: cus_01HX9K
+                    firstName: Marisol
+                    lastName: Vega
+                    email: marisol.vega@example.com
+                    phone: '+14155550177'
+                    dateOfBirth: '1988-**-**'
+                    address: { addressLine1: 400 S Tryon St, city: Charlotte, state: NC, postalCode: '28202', country: US }
+                    status: active
+                    createdAt: '2024-03-14T16:02:11Z'
+                    updatedAt: '2026-10-05T08:15:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Customers]
+      operationId: deleteCustomer
+      summary: Delete (deactivate) a customer
+      description: Soft-deletes the customer by setting status to `inactive`. Requires the `customers:delete` scope (otherwise `403`). Customers with open claims (`draft`, `submitted`, `under_review`, `approved`, or `settled`) cannot be deleted.
+      responses:
+        '204':
+          description: Customer deactivated.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Customer has open claims.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+              examples:
+                openClaims:
+                  value:
+                    type: https://api.vandelay-industries.example/problems/open-claims
+                    title: Customer has open claims
+                    status: 409
+                    detail: Customer cus_01HX9K has 1 open claim (clm_2026-000417).
+                    traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  /customers/v1/customers/{customerId}/vehicles:
+    parameters:
+      - $ref: '#/components/parameters/CustomerId'
+    get:
+      tags: [Vehicles]
+      operationId: listCustomerVehicles
+      summary: List a customer's vehicles
+      responses:
+        '200':
+          description: Vehicles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Vehicle' }
+              examples:
+                vehicles:
+                  value:
+                    data:
+                      - id: veh_7731
+                        vin: 1HGCM82633A004352
+                        year: 2022
+                        make: Honda
+                        model: Accord
+                        trim: EX-L
+                        color: Blue
+                        licensePlate: PBK4123
+                        licensePlateState: NC
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Vehicles]
+      operationId: addCustomerVehicle
+      summary: Add a vehicle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VehicleCreate' }
+            examples:
+              accord:
+                value:
+                  vin: 1HGCM82633A004352
+                  year: 2022
+                  make: Honda
+                  model: Accord
+                  trim: EX-L
+                  color: Blue
+                  licensePlate: PBK4123
+                  licensePlateState: NC
+      responses:
+        '201':
+          description: Vehicle added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vehicle' }
+              examples:
+                created:
+                  value:
+                    id: veh_7731
+                    vin: 1HGCM82633A004352
+                    year: 2022
+                    make: Honda
+                    model: Accord
+                    trim: EX-L
+                    color: Blue
+                    licensePlate: PBK4123
+                    licensePlateState: NC
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /customers/v1/customers/{customerId}/preferences:
+    parameters:
+      - $ref: '#/components/parameters/CustomerId'
+    get:
+      tags: [Preferences]
+      operationId: getCustomerPreferences
+      summary: Get communication preferences
+      responses:
+        '200':
+          description: Preferences.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preferences' }
+              examples:
+                prefs:
+                  value: { contactMethod: sms, language: en, marketingOptIn: false }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Preferences]
+      operationId: replaceCustomerPreferences
+      summary: Replace communication preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Preferences' }
+            examples:
+              emailPrefs:
+                value: { contactMethod: email, language: es, marketingOptIn: true }
+      responses:
+        '200':
+          description: Preferences saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preferences' }
+              examples:
+                saved:
+                  value: { contactMethod: email, language: es, marketingOptIn: true }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        Static opaque bearer token. These are random strings, **not JWTs**, so there are no claims to decode
+        (`bearerFormat` is informational). Send `Authorization: Bearer <token>`.
+
+        Tokens look like `vdl_<environment>_<persona>_<random>` and are issued by the API owner, one per persona and
+        per environment (Prod and Test use different tokens). The server maps each token to a persona with fixed scopes:
+
+        | Persona | Acts as | Scopes |
+        | --- | --- | --- |
+        | agent | `agt_claims_assistant` (AI agent) | none |
+        | adjuster | `adj_220` (Priya Raman) | `customers:pii:read`, `payments:write` |
+        | supervisor | `adj_105` (Denise Okafor) | `customers:pii:read`, `customers:delete`, `payments:write`, `payments:approve` |
+        | customer | `cus_01HX9K` (Marisol Vega) | none |
+
+        A missing or unrecognized token returns `401`; a recognized token that lacks a required scope returns `403`.
+        Agents obtain access through Passport references rather than raw tokens.
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      example: 20
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous response's `nextCursor`.
+      schema: { type: string }
+      example: eyJvIjoyMH0
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: 'Unique key (UUID recommended) so retries do not create duplicate resources. Retrying with the same key and body returns the original response with `Idempotent-Replayed: true`; reusing a key with a different body is rejected.'
+      schema: { type: string }
+      example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+    CustomerId:
+      name: customerId
+      in: path
+      required: true
+      description: Unique customer ID.
+      schema: { type: string, pattern: '^cus_[A-Za-z0-9]+$' }
+      example: cus_01HX9K
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            validation:
+              value:
+                type: https://api.vandelay-industries.example/problems/validation-error
+                title: Validation failed
+                status: 400
+                detail: Request body failed validation.
+                errors:
+                  - field: example
+                    message: is required
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            unauthorized:
+              value:
+                type: https://api.vandelay-industries.example/problems/unauthorized
+                title: Unauthorized
+                status: 401
+                detail: Bearer token is missing, expired, or invalid.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Forbidden:
+      description: The caller lacks the required scope.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            forbidden:
+              value:
+                type: https://api.vandelay-industries.example/problems/forbidden
+                title: Forbidden
+                status: 403
+                detail: Token is missing the required scope.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    NotFound:
+      description: Resource not found.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            notFound:
+              value:
+                type: https://api.vandelay-industries.example/problems/not-found
+                title: Resource not found
+                status: 404
+                detail: No resource exists with the given ID.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Conflict:
+      description: Conflict with current resource state or duplicate idempotency key.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            conflict:
+              value:
+                type: https://api.vandelay-industries.example/problems/conflict
+                title: Conflict
+                status: 409
+                detail: The request conflicts with the current state of the resource.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer }
+          example: 30
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            rateLimited:
+              value:
+                type: https://api.vandelay-industries.example/problems/rate-limited
+                title: Too many requests
+                status: 429
+                detail: Rate limit of 600 requests per minute exceeded.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  schemas:
+    Customer:
+      type: object
+      required: [id, firstName, lastName, email, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, example: cus_01HX9K }
+        firstName: { type: string, example: Marisol }
+        lastName: { type: string, example: Vega }
+        email: { type: string, format: email, example: marisol.vega@example.com }
+        phone: { type: string, description: E.164 format., example: '+14155550142' }
+        dateOfBirth: { type: string, description: Masked (`YYYY-**-**`) without the `customers:pii:read` scope., example: '1988-**-**' }
+        address: { $ref: '#/components/schemas/Address' }
+        status: { type: string, enum: [active, inactive, suspended] }
+        preferences: { $ref: '#/components/schemas/Preferences' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CustomerCreate:
+      type: object
+      required: [firstName, lastName, email]
+      properties:
+        firstName: { type: string }
+        lastName: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string }
+        dateOfBirth: { type: string, format: date }
+        address: { $ref: '#/components/schemas/Address' }
+        preferences: { $ref: '#/components/schemas/Preferences' }
+    CustomerUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        firstName: { type: string }
+        lastName: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string }
+        address: { $ref: '#/components/schemas/Address' }
+    CustomerList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Customer' }
+        nextCursor: { type: string, nullable: true }
+    Preferences:
+      type: object
+      properties:
+        contactMethod: { type: string, enum: [sms, email, phone, app] }
+        language: { type: string, example: en }
+        marketingOptIn: { type: boolean }
+    Vehicle:
+      type: object
+      required: [id, vin, year, make, model]
+      properties:
+        id: { type: string, example: veh_7731 }
+        vin: { type: string, minLength: 17, maxLength: 17, example: 1HGCM82633A004352 }
+        year: { type: integer, example: 2022 }
+        make: { type: string, example: Honda }
+        model: { type: string, example: Accord }
+        trim: { type: string }
+        color: { type: string }
+        licensePlate: { type: string }
+        licensePlateState: { type: string }
+    VehicleCreate:
+      type: object
+      required: [vin, year, make, model]
+      properties:
+        vin: { type: string, minLength: 17, maxLength: 17 }
+        year: { type: integer }
+        make: { type: string }
+        model: { type: string }
+        trim: { type: string }
+        color: { type: string }
+        licensePlate: { type: string }
+        licensePlateState: { type: string }
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: number, format: double, example: 4350.00 }
+        currency: { type: string, minLength: 3, maxLength: 3, example: USD }
+    Address:
+      type: object
+      required: [addressLine1, city, state, postalCode, country]
+      properties:
+        addressLine1: { type: string, example: 129 W Trade St }
+        addressLine2: { type: string, example: Apt 5A }
+        city: { type: string, example: Charlotte }
+        state: { type: string, example: NC }
+        postalCode: { type: string, example: '28202' }
+        country: { type: string, example: US }
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+        traceId: { type: string }

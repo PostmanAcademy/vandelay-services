@@ -1,0 +1,759 @@
+openapi: 3.0.3
+info:
+  title: Vandelay Claims API
+  version: 1.0.0
+  description: |
+    Create and manage auto insurance claims for Vandelay Industries.
+
+    The Claims API is the core service behind self-service claim creation. A claim is tied to a
+    **customer** (Customer API) and a **policy** (Policy API), may be assigned to **vendors**
+    (Vendors API) such as body shops and tow companies, and may result in **payments**
+    (Payments API).
+
+    ### Claim lifecycle
+    `draft` → `submitted` → `under_review` → `approved` | `denied` → `settled` → `closed`
+    (a claim can be `cancelled` any time before `settled`).
+
+    ### Conventions
+    - All requests require a bearer token (`Authorization: Bearer <token>`).
+    - `POST` requests accept an optional `Idempotency-Key` header.
+    - List endpoints use cursor pagination (`limit`, `cursor`).
+    - Errors use RFC 7807-style problem objects.
+    ### Authentication and rate limits
+    - Send `Authorization: Bearer <token>`; see `bearerAuth` for the token format and personas.
+    - Each token is limited to 600 requests per minute. Responses include `X-RateLimit-Limit` and `X-RateLimit-Remaining`;
+      over the limit you receive `429` with `Retry-After`.
+    - A `POST` retried with the same `Idempotency-Key` and body replays the original response and adds `Idempotent-Replayed: true`.
+    - No scopes are required: any valid token can call every operation. Callers authenticated as a customer see only `customer`-visible notes.
+    - Cancelling a claim also cancels its open vendor assignments and any payments still `pending_approval` or `processing`.
+  contact:
+    name: Vandelay API Platform Team
+    email: api-platform@vandelay-industries.example
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.vandelay-industries.example
+    description: Production
+  - url: https://api.staging.vandelay-industries.example
+    description: Staging
+security:
+  - bearerAuth: []
+tags:
+  - name: Claims
+    description: Create, read, update, and cancel claims.
+  - name: Notes
+    description: Adjuster and customer notes on a claim.
+  - name: Assignments
+    description: Vendor assignments (tow, repair, rental, appraisal) for a claim.
+  - name: Timeline
+    description: Audit trail of claim events.
+paths:
+  /claims/v1/claims:
+    get:
+      tags: [Claims]
+      operationId: listClaims
+      summary: List claims
+      description: Returns a paginated list of claims, newest first. Filter by status, customer, or policy.
+      parameters:
+        - name: status
+          in: query
+          description: Filter by claim status.
+          schema: { $ref: '#/components/schemas/ClaimStatus' }
+          example: approved
+        - name: customerId
+          in: query
+          description: Filter by customer ID.
+          schema: { type: string }
+          example: cus_01HX9K
+        - name: policyId
+          in: query
+          description: Filter by policy ID.
+          schema: { type: string }
+          example: pol_AUT-882145
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of claims.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimList' }
+              examples:
+                approvedClaims:
+                  summary: Approved claims for a customer
+                  value:
+                    data:
+                      - id: clm_2026-000417
+                        customerId: cus_01HX9K
+                        policyId: pol_AUT-882145
+                        status: approved
+                        type: collision
+                        lossDate: '2026-10-02'
+                        lossLocation: { addressLine1: 100 N Tryon St, city: Charlotte, state: NC, postalCode: '28202', country: US }
+                        description: Rear-ended at a stoplight on N Tryon St. Rear bumper and trunk damaged.
+                        estimatedAmount: { amount: 4850.00, currency: USD }
+                        createdAt: '2026-10-02T18:21:07Z'
+                        updatedAt: '2026-10-08T21:47:19Z'
+                    nextCursor: null
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [Claims]
+      operationId: createClaim
+      summary: Create a claim
+      description: |
+        Creates a new claim. The policy must be active on the loss date; coverage is validated
+        against the Policy API. Set `submit` to `true` to move straight to `submitted`; otherwise the
+        claim is created as a `draft`.
+
+        The customer must be `active` and own the policy, and a `vehicleId` must be insured on it. The `deductible` comes from
+        the coverage that pays for the loss type. A second claim for the same policy, vehicle, type, and loss date returns `409`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimCreate' }
+            examples:
+              collision:
+                summary: Collision claim, submitted immediately
+                value:
+                  customerId: cus_01HX9K
+                  policyId: pol_AUT-882145
+                  vehicleId: veh_7731
+                  type: collision
+                  lossDate: '2026-10-02'
+                  lossLocation: { addressLine1: 100 N Tryon St, city: Charlotte, state: NC, postalCode: '28202', country: US }
+                  description: Rear-ended at a stoplight on N Tryon St. Rear bumper and trunk damaged.
+                  drivable: true
+                  injuries: false
+                  policeReportNumber: CMPD-26-114382
+                  submit: true
+              theft:
+                summary: Theft claim saved as draft
+                value:
+                  customerId: cus_01HX9K
+                  policyId: pol_AUT-882145
+                  vehicleId: veh_7731
+                  type: theft
+                  lossDate: '2026-09-28'
+                  description: Vehicle stolen from a parking garage overnight.
+                  drivable: false
+                  injuries: false
+                  submit: false
+      responses:
+        '201':
+          description: Claim created.
+          headers:
+            Location:
+              description: URL of the new claim.
+              schema: { type: string }
+              example: /claims/clm_2026-000417
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Claim' }
+              examples:
+                created:
+                  summary: Submitted collision claim
+                  value:
+                    id: clm_2026-000417
+                    customerId: cus_01HX9K
+                    policyId: pol_AUT-882145
+                    vehicleId: veh_7731
+                    status: submitted
+                    type: collision
+                    lossDate: '2026-10-02'
+                    lossLocation: { addressLine1: 100 N Tryon St, city: Charlotte, state: NC, postalCode: '28202', country: US }
+                    description: Rear-ended at a stoplight on N Tryon St. Rear bumper and trunk damaged.
+                    drivable: true
+                    injuries: false
+                    policeReportNumber: CMPD-26-114382
+                    estimatedAmount: null
+                    deductible: { amount: 500.00, currency: USD }
+                    assignedAdjusterId: null
+                    createdAt: '2026-10-02T18:21:07Z'
+                    updatedAt: '2026-10-02T18:21:07Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422':
+          description: Business rule violation (e.g., policy not active on the loss date).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+              examples:
+                policyLapsed:
+                  value:
+                    type: https://api.vandelay-industries.example/problems/policy-not-active
+                    title: Policy not active on loss date
+                    status: 422
+                    detail: Policy pol_AUT-882145 lapsed on 2026-09-01 and was not active on 2026-10-02.
+                    traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  /claims/v1/claims/{claimId}:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    get:
+      tags: [Claims]
+      operationId: getClaim
+      summary: Get a claim
+      responses:
+        '200':
+          description: The claim.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Claim' }
+              examples:
+                underReview:
+                  summary: Claim under review
+                  value:
+                    id: clm_2026-000417
+                    customerId: cus_01HX9K
+                    policyId: pol_AUT-882145
+                    vehicleId: veh_7731
+                    status: under_review
+                    type: collision
+                    lossDate: '2026-10-02'
+                    lossLocation: { addressLine1: 100 N Tryon St, city: Charlotte, state: NC, postalCode: '28202', country: US }
+                    description: Rear-ended at a stoplight on N Tryon St. Rear bumper and trunk damaged.
+                    drivable: true
+                    injuries: false
+                    policeReportNumber: CMPD-26-114382
+                    estimatedAmount: { amount: 4850.00, currency: USD }
+                    deductible: { amount: 500.00, currency: USD }
+                    assignedAdjusterId: adj_220
+                    createdAt: '2026-10-02T18:21:07Z'
+                    updatedAt: '2026-10-03T09:12:55Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Claims]
+      operationId: updateClaim
+      summary: Update a claim
+      description: Partially updates a claim. Only `draft`, `submitted`, and `under_review` claims can be modified. Status only moves forward (`draft` to `submitted` to `under_review` to `approved` or `denied`); an adjuster must be assigned before `under_review` and an estimate set before `approved`. Use `POST /claims/v1/claims/{claimId}/cancel` to cancel. The approved amount is the estimate less the deductible.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClaimUpdate' }
+            examples:
+              adjusterEstimate:
+                summary: Adjuster sets estimate and moves to review
+                value:
+                  status: under_review
+                  assignedAdjusterId: adj_220
+                  estimatedAmount: { amount: 4850.00, currency: USD }
+      responses:
+        '200':
+          description: Updated claim.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Claim' }
+              examples:
+                updated:
+                  value:
+                    id: clm_2026-000417
+                    customerId: cus_01HX9K
+                    policyId: pol_AUT-882145
+                    vehicleId: veh_7731
+                    status: under_review
+                    type: collision
+                    lossDate: '2026-10-02'
+                    description: Rear-ended at a stoplight on N Tryon St. Rear bumper and trunk damaged.
+                    drivable: true
+                    injuries: false
+                    estimatedAmount: { amount: 4850.00, currency: USD }
+                    deductible: { amount: 500.00, currency: USD }
+                    assignedAdjusterId: adj_220
+                    createdAt: '2026-10-02T18:21:07Z'
+                    updatedAt: '2026-10-03T09:12:55Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /claims/v1/claims/{claimId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    post:
+      tags: [Claims]
+      operationId: cancelClaim
+      summary: Cancel a claim
+      description: Cancels a claim that has not yet been settled. Open vendor assignments and any payments still `pending_approval` or `processing` are cancelled with it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CancelRequest' }
+            examples:
+              customerRequest:
+                value:
+                  reason: customer_request
+                  comment: Customer decided to pay out of pocket.
+      responses:
+        '200':
+          description: Claim cancelled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Claim' }
+              examples:
+                cancelled:
+                  value:
+                    id: clm_2026-000417
+                    customerId: cus_01HX9K
+                    policyId: pol_AUT-882145
+                    status: cancelled
+                    type: collision
+                    lossDate: '2026-10-02'
+                    description: Rear-ended at a stoplight on N Tryon St.
+                    createdAt: '2026-10-02T18:21:07Z'
+                    updatedAt: '2026-10-04T14:00:02Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /claims/v1/claims/{claimId}/notes:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    get:
+      tags: [Notes]
+      operationId: listClaimNotes
+      summary: List claim notes
+      responses:
+        '200':
+          description: Notes on the claim, oldest first. Callers authenticated as a customer see only `customer`-visible notes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Note' }
+              examples:
+                notes:
+                  value:
+                    data:
+                      - id: note_001
+                        author: { type: adjuster, id: adj_220 }
+                        visibility: internal
+                        body: Photos reviewed. Damage consistent with rear impact.
+                        createdAt: '2026-10-03T09:10:00Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Notes]
+      operationId: addClaimNote
+      summary: Add a note to a claim
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NoteCreate' }
+            examples:
+              customerNote:
+                value:
+                  visibility: customer
+                  body: Please contact me after 5pm PT about repair scheduling.
+      responses:
+        '201':
+          description: Note added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Note' }
+              examples:
+                created:
+                  value:
+                    id: note_002
+                    author: { type: customer, id: cus_01HX9K }
+                    visibility: customer
+                    body: Please contact me after 5pm PT about repair scheduling.
+                    createdAt: '2026-10-03T22:41:18Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /claims/v1/claims/{claimId}/assignments:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    get:
+      tags: [Assignments]
+      operationId: listClaimAssignments
+      summary: List vendor assignments
+      responses:
+        '200':
+          description: Vendor assignments for the claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Assignment' }
+              examples:
+                assignments:
+                  value:
+                    data:
+                      - id: asg_5521
+                        claimId: clm_2026-000417
+                        vendorId: ven_4417
+                        role: repair
+                        status: in_progress
+                        scheduledFor: '2026-10-07T09:00:00-04:00'
+                        createdAt: '2026-10-03T09:30:00Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Assignments]
+      operationId: assignVendorToClaim
+      summary: Assign a vendor to a claim
+      description: Requests a vendor (from the Vendors API) to perform work on the claim.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignmentCreate' }
+            examples:
+              repairShop:
+                value:
+                  vendorId: ven_4417
+                  role: repair
+                  scheduledFor: '2026-10-07T09:00:00-04:00'
+                  instructions: Replace rear bumper cover and repair trunk lid. Submit supplement if hidden damage found.
+      responses:
+        '201':
+          description: Assignment created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Assignment' }
+              examples:
+                created:
+                  value:
+                    id: asg_5521
+                    claimId: clm_2026-000417
+                    vendorId: ven_4417
+                    role: repair
+                    status: requested
+                    scheduledFor: '2026-10-07T09:00:00-04:00'
+                    createdAt: '2026-10-03T09:30:00Z'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Vendor not eligible (e.g., not in network or not serving the loss location).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+              examples:
+                notInNetwork:
+                  value:
+                    type: https://api.vandelay-industries.example/problems/vendor-not-eligible
+                    title: Vendor not eligible
+                    status: 422
+                    detail: Vendor ven_4733 is not in the preferred network for NC.
+                    traceId: 00f067aa0ba902b7a3ce929d0e0e4736
+  /claims/v1/claims/{claimId}/timeline:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    get:
+      tags: [Timeline]
+      operationId: getClaimTimeline
+      summary: Get claim timeline
+      description: Chronological audit trail of events for the claim.
+      responses:
+        '200':
+          description: Timeline events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TimelineEvent' }
+              examples:
+                timeline:
+                  value:
+                    data:
+                      - at: '2026-10-02T18:21:07Z'
+                        event: claim.created
+                        actor: { type: customer, id: cus_01HX9K }
+                        summary: Claim created and submitted.
+                      - at: '2026-10-03T09:12:55Z'
+                        event: claim.status_changed
+                        actor: { type: adjuster, id: adj_220 }
+                        summary: Status changed from submitted to under_review.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        Static opaque bearer token. These are random strings, **not JWTs**, so there are no claims to decode
+        (`bearerFormat` is informational). Send `Authorization: Bearer <token>`.
+
+        Tokens look like `vdl_<environment>_<persona>_<random>` and are issued by the API owner, one per persona and
+        per environment (Prod and Test use different tokens). The server maps each token to a persona with fixed scopes:
+
+        | Persona | Acts as | Scopes |
+        | --- | --- | --- |
+        | agent | `agt_claims_assistant` (AI agent) | none |
+        | adjuster | `adj_220` (Priya Raman) | `customers:pii:read`, `payments:write` |
+        | supervisor | `adj_105` (Denise Okafor) | `customers:pii:read`, `customers:delete`, `payments:write`, `payments:approve` |
+        | customer | `cus_01HX9K` (Marisol Vega) | none |
+
+        A missing or unrecognized token returns `401`; a recognized token that lacks a required scope returns `403`.
+        Agents obtain access through Passport references rather than raw tokens.
+  parameters:
+    ClaimId:
+      name: claimId
+      in: path
+      required: true
+      description: Unique claim ID.
+      schema: { type: string, pattern: '^clm_[0-9]{4}-[0-9]{6}$' }
+      example: clm_2026-000417
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      example: 20
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous response's `nextCursor`.
+      schema: { type: string }
+      example: eyJvIjoyMH0
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: 'Unique key (UUID recommended) so retries do not create duplicate resources. Retrying with the same key and body returns the original response with `Idempotent-Replayed: true`; reusing a key with a different body is rejected.'
+      schema: { type: string }
+      example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            validation:
+              value:
+                type: https://api.vandelay-industries.example/problems/validation-error
+                title: Validation failed
+                status: 400
+                detail: Request body failed validation.
+                errors:
+                  - field: lossDate
+                    message: must not be in the future
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            unauthorized:
+              value:
+                type: https://api.vandelay-industries.example/problems/unauthorized
+                title: Unauthorized
+                status: 401
+                detail: Bearer token is missing, expired, or invalid.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    NotFound:
+      description: Resource not found.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            notFound:
+              value:
+                type: https://api.vandelay-industries.example/problems/not-found
+                title: Claim not found
+                status: 404
+                detail: No claim exists with ID clm_2026-999999.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    Conflict:
+      description: Conflict with current resource state or duplicate idempotency key.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            conflict:
+              value:
+                type: https://api.vandelay-industries.example/problems/conflict
+                title: Invalid state transition
+                status: 409
+                detail: Claim is settled and can no longer be modified or cancelled.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: { type: integer }
+          example: 30
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          examples:
+            rateLimited:
+              value:
+                type: https://api.vandelay-industries.example/problems/rate-limited
+                title: Too many requests
+                status: 429
+                detail: Rate limit of 600 requests per minute exceeded.
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+  schemas:
+    ClaimStatus:
+      type: string
+      enum: [draft, submitted, under_review, approved, denied, settled, closed, cancelled]
+    ClaimType:
+      type: string
+      enum: [collision, comprehensive, theft, glass, vandalism, weather, liability, other]
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: number, format: double, example: 4850.00 }
+        currency: { type: string, minLength: 3, maxLength: 3, example: USD }
+    Address:
+      type: object
+      required: [addressLine1, city, state, postalCode, country]
+      properties:
+        addressLine1: { type: string, example: 100 N Tryon St }
+        addressLine2: { type: string }
+        city: { type: string, example: Charlotte }
+        state: { type: string, example: NC }
+        postalCode: { type: string, example: '28202' }
+        country: { type: string, example: US }
+    Claim:
+      type: object
+      required: [id, customerId, policyId, status, type, lossDate, createdAt, updatedAt]
+      properties:
+        id: { type: string, example: clm_2026-000417 }
+        customerId: { type: string, example: cus_01HX9K }
+        policyId: { type: string, example: pol_AUT-882145 }
+        vehicleId: { type: string, example: veh_7731 }
+        status: { $ref: '#/components/schemas/ClaimStatus' }
+        type: { $ref: '#/components/schemas/ClaimType' }
+        lossDate: { type: string, format: date, example: '2026-10-02' }
+        lossLocation: { $ref: '#/components/schemas/Address' }
+        description: { type: string, example: Rear-ended at a stoplight. }
+        drivable: { type: boolean }
+        injuries: { type: boolean }
+        policeReportNumber: { type: string, nullable: true }
+        estimatedAmount: { allOf: [{ $ref: '#/components/schemas/Money' }], nullable: true }
+        deductible: { $ref: '#/components/schemas/Money' }
+        assignedAdjusterId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ClaimCreate:
+      type: object
+      required: [customerId, policyId, type, lossDate, description]
+      properties:
+        customerId: { type: string }
+        policyId: { type: string }
+        vehicleId: { type: string }
+        type: { $ref: '#/components/schemas/ClaimType' }
+        lossDate: { type: string, format: date }
+        lossLocation: { $ref: '#/components/schemas/Address' }
+        description: { type: string, minLength: 10, maxLength: 4000 }
+        drivable: { type: boolean }
+        injuries: { type: boolean }
+        policeReportNumber: { type: string }
+        submit: { type: boolean, default: false, description: 'If true, the claim is submitted immediately.' }
+    ClaimUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        status: { $ref: '#/components/schemas/ClaimStatus' }
+        description: { type: string }
+        assignedAdjusterId: { type: string }
+        estimatedAmount: { $ref: '#/components/schemas/Money' }
+    ClaimList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Claim' }
+        nextCursor: { type: string, nullable: true }
+    CancelRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, enum: [customer_request, duplicate, fraud_suspected, policy_issue, other] }
+        comment: { type: string }
+    Note:
+      type: object
+      required: [id, author, visibility, body, createdAt]
+      properties:
+        id: { type: string }
+        author:
+          type: object
+          required: [type, id]
+          properties:
+            type: { type: string, enum: [customer, adjuster, vendor, system] }
+            id: { type: string }
+        visibility: { type: string, enum: [internal, customer] }
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+    NoteCreate:
+      type: object
+      required: [body]
+      properties:
+        visibility: { type: string, enum: [internal, customer], default: customer }
+        body: { type: string, minLength: 1, maxLength: 4000 }
+    Assignment:
+      type: object
+      required: [id, claimId, vendorId, role, status, createdAt]
+      properties:
+        id: { type: string }
+        claimId: { type: string }
+        vendorId: { type: string }
+        role: { type: string, enum: [tow, repair, rental, appraisal, glass] }
+        status: { type: string, enum: [requested, accepted, declined, in_progress, completed, cancelled] }
+        scheduledFor: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    AssignmentCreate:
+      type: object
+      required: [vendorId, role]
+      properties:
+        vendorId: { type: string }
+        role: { type: string, enum: [tow, repair, rental, appraisal, glass] }
+        scheduledFor: { type: string, format: date-time }
+        instructions: { type: string }
+    TimelineEvent:
+      type: object
+      required: [at, event, summary]
+      properties:
+        at: { type: string, format: date-time }
+        event: { type: string, example: claim.created }
+        actor:
+          type: object
+          properties:
+            type: { type: string }
+            id: { type: string }
+        summary: { type: string }
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+        traceId: { type: string }
