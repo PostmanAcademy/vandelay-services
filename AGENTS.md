@@ -8,3 +8,4 @@ Serves the five Vandelay Industries APIs defined in `vandelay-openapi/` (Custome
 - API tokens come only from environment variables (`API_TOKEN_*`); never write token values into the repo. See README.md, Authentication.
 - Run tests with the `API_TOKEN_*` variables and `ADMIN_TOKEN` exported (see README.md).
 - Deploy to AWS (App Runner + RDS) with `deploy/aws/deploy.sh`; remove it with `deploy/aws/teardown.sh` (see README.md).
+- `mcp/` is a separate Bun package: the claims MCP server that sits on top of the APIs (see `mcp/README.md`). Its tests (`cd mcp && bun test`) need the APIs and the MCP server running. Deploy with `deploy/aws/deploy-mcp.sh`.

@@ -1,0 +1,22 @@
+{
+  "name": "vandelay-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "MCP server for the Vandelay claims lifecycle (open, manage, close), built on the Vandelay Industries APIs.",
+  "scripts": {
+    "start": "bun src/server.ts",
+    "dev": "bun --watch src/server.ts",
+    "test": "bun test tests/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "typescript": "^7.0.2"
+  }
+}

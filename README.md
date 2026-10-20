@@ -22,6 +22,10 @@ a spec produces requests such as `{{baseUrl}}/claims/v1/claims`, and the Prod an
 **The specs are the contract.** Request bodies are validated against them at runtime, and the test
 suite validates every response against them in strict mode (undeclared properties fail).
 
+## MCP server
+
+[`mcp/`](mcp/) is a separate service: an MCP server that exposes the claim lifecycle (open, manage, close) to customers, AI agents, adjusters and supervisors on top of these APIs, with role-based tools and business rules. See [`mcp/README.md`](mcp/README.md); deploy it with `deploy/aws/deploy-mcp.sh`.
+
 ## Authentication
 
 Every API requires `Authorization: Bearer <token>`. There are four personas. Their identities and

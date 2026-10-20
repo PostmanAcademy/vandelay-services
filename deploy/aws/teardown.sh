@@ -7,10 +7,10 @@ export AWS_DEFAULT_REGION="${AWS_REGION:-us-east-1}"
 P=vandelay
 step() { printf '\n==> %s\n' "$*"; }
 
-step "App Runner services"
-for env in prod test; do
-  arn="$(aws apprunner list-services --query "ServiceSummaryList[?ServiceName=='$P-$env'].ServiceArn | [0]" --output text)"
-  [ "$arn" != None ] && aws apprunner delete-service --service-arn "$arn" >/dev/null && echo "deleting $P-$env"
+step "App Runner services (APIs and MCP servers)"
+for name in $P-mcp-prod $P-mcp-test $P-prod $P-test; do
+  arn="$(aws apprunner list-services --query "ServiceSummaryList[?ServiceName=='$name'].ServiceArn | [0]" --output text)"
+  [ "$arn" != None ] && aws apprunner delete-service --service-arn "$arn" >/dev/null && echo "deleting $name"
 done
 for _ in $(seq 1 60); do
   left="$(aws apprunner list-services --query "length(ServiceSummaryList[?starts_with(ServiceName,'$P-')])" --output text)"
@@ -52,4 +52,5 @@ aws iam delete-role --role-name $P-apprunner-ecr 2>/dev/null
 aws iam delete-role-policy --role-name $P-apprunner-instance --policy-name read-vandelay-secrets 2>/dev/null
 aws iam delete-role --role-name $P-apprunner-instance 2>/dev/null
 aws ecr delete-repository --repository-name $P-apis --force >/dev/null 2>&1
+aws ecr delete-repository --repository-name $P-mcp --force >/dev/null 2>&1
 echo "Done."
