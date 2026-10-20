@@ -1,0 +1,244 @@
+{
+  "name": "postman-custedu",
+  "version": "1.0.0",
+  "description": "Manage Vandelay Industries customer profiles, contact details, vehicles, and communication preferences.  This API returns **PII** (names, phone numbers, addresses, dates of birth). When called by an agent, traffic should flow through the Fabric Gateway so PII-redaction plugins can protect downstream LLMs. Sensitive fields are returned masked unless the caller holds the `customers:pii:read` scope. ### Authentication and rate limits - Send `Authorization: Bearer <token>`; see `bearerAuth` for the token format and personas. - Each token is limited to 600 requests per minute. Responses include `X-RateLimit-Limit` and `X-RateLimit-Remaining`;   over the limit you receive `429` with `Retry-After`. - A `POST` retried with the same `Idempotency-Key` and body replays the original response and adds `Idempotent-Replayed: true`. - `customers:pii:read` unmasks `dateOfBirth`. `customers:delete` is required to deactivate a customer (`DELETE /customers/v1/customers/{customerId}`, otherwise `403`).",
+  "source": "./src/index.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "browser": "./dist/index.js",
+  "unpkg": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "test": "vitest",
+    "build": "tsup-node src/index.ts src/api/resources/assignments/index.ts src/api/resources/claims/index.ts src/api/resources/coverages/index.ts src/api/resources/coverageVerification/index.ts src/api/resources/customers/index.ts src/api/resources/drivers/index.ts src/api/resources/notes/index.ts src/api/resources/paymentMethods/index.ts src/api/resources/payments/index.ts src/api/resources/policies/index.ts src/api/resources/preferences/index.ts src/api/resources/refunds/index.ts src/api/resources/timeline/index.ts src/api/resources/vehicles/index.ts src/api/resources/vendors/index.ts src/api/resources/workOrders/index.ts --format cjs,esm --clean && tsc --project tsconfig.types.json && node -e \"const fs=require('fs');const path=require('path');function fx(s,d){const dir=path.dirname(s);const c=fs.readFileSync(s,'utf8');const p=c.replace(/((?:from|import)\\s*\\(?\\s*[\\x27\\x22])(\\.\\.?\\/[^\\x27\\x22]+?)([\\x27\\x22])/g,(m,a,b,e)=>{if(/\\.[a-zA-Z0-9]+$/.test(b))return m;const suffix=fs.existsSync(path.join(dir,b)+'.d.ts')?'.js':'/index.js';return a+b+suffix+e});fs.writeFileSync(d,p)};fx('dist/index.d.ts','dist/index.d.mts');fx('dist/api/resources/assignments/index.d.ts','dist/api/resources/assignments/index.d.mts');fx('dist/api/resources/claims/index.d.ts','dist/api/resources/claims/index.d.mts');fx('dist/api/resources/coverages/index.d.ts','dist/api/resources/coverages/index.d.mts');fx('dist/api/resources/coverageVerification/index.d.ts','dist/api/resources/coverageVerification/index.d.mts');fx('dist/api/resources/customers/index.d.ts','dist/api/resources/customers/index.d.mts');fx('dist/api/resources/drivers/index.d.ts','dist/api/resources/drivers/index.d.mts');fx('dist/api/resources/notes/index.d.ts','dist/api/resources/notes/index.d.mts');fx('dist/api/resources/paymentMethods/index.d.ts','dist/api/resources/paymentMethods/index.d.mts');fx('dist/api/resources/payments/index.d.ts','dist/api/resources/payments/index.d.mts');fx('dist/api/resources/policies/index.d.ts','dist/api/resources/policies/index.d.mts');fx('dist/api/resources/preferences/index.d.ts','dist/api/resources/preferences/index.d.mts');fx('dist/api/resources/refunds/index.d.ts','dist/api/resources/refunds/index.d.mts');fx('dist/api/resources/timeline/index.d.ts','dist/api/resources/timeline/index.d.mts');fx('dist/api/resources/vehicles/index.d.ts','dist/api/resources/vehicles/index.d.mts');fx('dist/api/resources/vendors/index.d.ts','dist/api/resources/vendors/index.d.mts');fx('dist/api/resources/workOrders/index.d.ts','dist/api/resources/workOrders/index.d.mts')\"",
+    "format": "biome format --write --skip-parse-errors --no-errors-on-unmatched --max-diagnostics=none",
+    "format:check": "biome format --skip-parse-errors --no-errors-on-unmatched --max-diagnostics=none",
+    "lint": "biome lint --skip-parse-errors --no-errors-on-unmatched --max-diagnostics=none",
+    "lint:fix": "biome lint --fix --unsafe --skip-parse-errors --no-errors-on-unmatched --max-diagnostics=none",
+    "check": "biome check --skip-parse-errors --no-errors-on-unmatched --max-diagnostics=none",
+    "check:fix": "biome check --fix --unsafe --skip-parse-errors --no-errors-on-unmatched --max-diagnostics=none",
+    "prepublishOnly": "chmod +x ./scripts/prepublish.sh && ./scripts/prepublish.sh && npm run build",
+    "test-example": "cd examples && tsc --noEmit"
+  },
+  "keywords": [
+    "typescript",
+    "sdk",
+    "api",
+    "client"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "author": "Vandelay API Platform Team",
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "@types/node": "^22.14.0",
+    "tsup": "^6.7.0",
+    "vitest": "^3.2.4",
+    "@biomejs/biome": "2.4.10",
+    "webpack": "^5.105.4",
+    "ts-loader": "^9.5.4"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json",
+    "./assignments": {
+      "require": {
+        "types": "./dist/api/resources/assignments/index.d.ts",
+        "default": "./dist/api/resources/assignments/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/assignments/index.d.mts",
+        "default": "./dist/api/resources/assignments/index.mjs"
+      },
+      "default": "./dist/api/resources/assignments/index.js"
+    },
+    "./claims": {
+      "require": {
+        "types": "./dist/api/resources/claims/index.d.ts",
+        "default": "./dist/api/resources/claims/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/claims/index.d.mts",
+        "default": "./dist/api/resources/claims/index.mjs"
+      },
+      "default": "./dist/api/resources/claims/index.js"
+    },
+    "./coverages": {
+      "require": {
+        "types": "./dist/api/resources/coverages/index.d.ts",
+        "default": "./dist/api/resources/coverages/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/coverages/index.d.mts",
+        "default": "./dist/api/resources/coverages/index.mjs"
+      },
+      "default": "./dist/api/resources/coverages/index.js"
+    },
+    "./coverageVerification": {
+      "require": {
+        "types": "./dist/api/resources/coverageVerification/index.d.ts",
+        "default": "./dist/api/resources/coverageVerification/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/coverageVerification/index.d.mts",
+        "default": "./dist/api/resources/coverageVerification/index.mjs"
+      },
+      "default": "./dist/api/resources/coverageVerification/index.js"
+    },
+    "./customers": {
+      "require": {
+        "types": "./dist/api/resources/customers/index.d.ts",
+        "default": "./dist/api/resources/customers/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/customers/index.d.mts",
+        "default": "./dist/api/resources/customers/index.mjs"
+      },
+      "default": "./dist/api/resources/customers/index.js"
+    },
+    "./drivers": {
+      "require": {
+        "types": "./dist/api/resources/drivers/index.d.ts",
+        "default": "./dist/api/resources/drivers/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/drivers/index.d.mts",
+        "default": "./dist/api/resources/drivers/index.mjs"
+      },
+      "default": "./dist/api/resources/drivers/index.js"
+    },
+    "./notes": {
+      "require": {
+        "types": "./dist/api/resources/notes/index.d.ts",
+        "default": "./dist/api/resources/notes/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/notes/index.d.mts",
+        "default": "./dist/api/resources/notes/index.mjs"
+      },
+      "default": "./dist/api/resources/notes/index.js"
+    },
+    "./paymentMethods": {
+      "require": {
+        "types": "./dist/api/resources/paymentMethods/index.d.ts",
+        "default": "./dist/api/resources/paymentMethods/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/paymentMethods/index.d.mts",
+        "default": "./dist/api/resources/paymentMethods/index.mjs"
+      },
+      "default": "./dist/api/resources/paymentMethods/index.js"
+    },
+    "./payments": {
+      "require": {
+        "types": "./dist/api/resources/payments/index.d.ts",
+        "default": "./dist/api/resources/payments/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/payments/index.d.mts",
+        "default": "./dist/api/resources/payments/index.mjs"
+      },
+      "default": "./dist/api/resources/payments/index.js"
+    },
+    "./policies": {
+      "require": {
+        "types": "./dist/api/resources/policies/index.d.ts",
+        "default": "./dist/api/resources/policies/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/policies/index.d.mts",
+        "default": "./dist/api/resources/policies/index.mjs"
+      },
+      "default": "./dist/api/resources/policies/index.js"
+    },
+    "./preferences": {
+      "require": {
+        "types": "./dist/api/resources/preferences/index.d.ts",
+        "default": "./dist/api/resources/preferences/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/preferences/index.d.mts",
+        "default": "./dist/api/resources/preferences/index.mjs"
+      },
+      "default": "./dist/api/resources/preferences/index.js"
+    },
+    "./refunds": {
+      "require": {
+        "types": "./dist/api/resources/refunds/index.d.ts",
+        "default": "./dist/api/resources/refunds/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/refunds/index.d.mts",
+        "default": "./dist/api/resources/refunds/index.mjs"
+      },
+      "default": "./dist/api/resources/refunds/index.js"
+    },
+    "./timeline": {
+      "require": {
+        "types": "./dist/api/resources/timeline/index.d.ts",
+        "default": "./dist/api/resources/timeline/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/timeline/index.d.mts",
+        "default": "./dist/api/resources/timeline/index.mjs"
+      },
+      "default": "./dist/api/resources/timeline/index.js"
+    },
+    "./vehicles": {
+      "require": {
+        "types": "./dist/api/resources/vehicles/index.d.ts",
+        "default": "./dist/api/resources/vehicles/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/vehicles/index.d.mts",
+        "default": "./dist/api/resources/vehicles/index.mjs"
+      },
+      "default": "./dist/api/resources/vehicles/index.js"
+    },
+    "./vendors": {
+      "require": {
+        "types": "./dist/api/resources/vendors/index.d.ts",
+        "default": "./dist/api/resources/vendors/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/vendors/index.d.mts",
+        "default": "./dist/api/resources/vendors/index.mjs"
+      },
+      "default": "./dist/api/resources/vendors/index.js"
+    },
+    "./workOrders": {
+      "require": {
+        "types": "./dist/api/resources/workOrders/index.d.ts",
+        "default": "./dist/api/resources/workOrders/index.js"
+      },
+      "import": {
+        "types": "./dist/api/resources/workOrders/index.d.mts",
+        "default": "./dist/api/resources/workOrders/index.mjs"
+      },
+      "default": "./dist/api/resources/workOrders/index.js"
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

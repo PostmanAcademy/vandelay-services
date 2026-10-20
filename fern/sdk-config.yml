@@ -22,3 +22,7 @@ targets:
     output:
       delivery: files
       path: ../sdks/typescript
+  - language: python
+    output:
+      delivery: files
+      path: ../sdks/python

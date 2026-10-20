@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "postman_custedu"
+version = "1.0.0"
+description = """Manage Vandelay Industries customer profiles, contact details, vehicles, and communication preferences.\n\nThis API returns **PII** (names, phone numbers, addresses, dates of birth). When called by an agent,\ntraffic should flow through the Fabric Gateway so PII-redaction plugins can protect downstream LLMs.\nSensitive fields are returned masked unless the caller holds the `customers:pii:read` scope.\n### Authentication and rate limits\n- Send `Authorization: Bearer <token>`; see `bearerAuth` for the token format and personas.\n- Each token is limited to 600 requests per minute. Responses include `X-RateLimit-Limit` and `X-RateLimit-Remaining`;\n  over the limit you receive `429` with `Retry-After`.\n- A `POST` retried with the same `Idempotency-Key` and body replays the original response and adds `Idempotent-Replayed: true`.\n- `customers:pii:read` unmasks `dateOfBirth`. `customers:delete` is required to deactivate a customer (`DELETE /customers/v1/customers/{customerId}`, otherwise `403`).\n"""
+readme = "PyPI_README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.31.0",
+    "pydantic>=2.0.0,<3.0.0"
+]

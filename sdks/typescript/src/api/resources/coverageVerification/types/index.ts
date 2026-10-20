@@ -1,0 +1,1 @@
+export { CoverageVerificationRequestClaimType } from './CoverageVerificationRequestClaimType';
