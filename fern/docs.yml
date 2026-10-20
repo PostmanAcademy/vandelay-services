@@ -1,6 +1,5 @@
 instances:
-  - url: https://vandelay.docs.buildwithfern.com
-  - url: https://postman-custedu.docs.buildwithfern.com
+  - url: postman-custedu.docs.buildwithfern.com
 title: Vandelay | Documentation
 navigation:
   - api: Customers API
