@@ -1,0 +1,24 @@
+schemaVersion: sdk-config/v1
+sdkName: api
+source:
+  specs:
+    - id: customer
+      type: openapi
+      path: openapi/customer-api.yaml
+    - id: policy
+      type: openapi
+      path: openapi/policy-api.yaml
+    - id: claims
+      type: openapi
+      path: openapi/claims-api.yaml
+    - id: payments
+      type: openapi
+      path: openapi/payments-api.yaml
+    - id: vendors
+      type: openapi
+      path: openapi/vendors-api.yaml
+targets:
+  - language: typescript
+    output:
+      delivery: files
+      path: ../sdks/typescript

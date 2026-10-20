@@ -147,6 +147,7 @@ Every status code the server returns is documented in the specs, and the suite f
 - Documented behavior that was implied but never written down: the `customers:delete` and `payments:write` scopes, the
   approval thresholds, automatic settlement, claim status rules, rate-limit and idempotency headers.
 - `bearerAuth` now describes the opaque (non-JWT) tokens in use and the four personas and their scopes.
+- Moved the inline `method` enum on `Payment` into a named `PaymentRail` schema (same values and wire format). Fern auto-named the inline enum `PaymentMethod`, which collided with the real `PaymentMethod` schema and failed `fern check`.
 
 ## Deploy to AWS (Prod and Test)
 

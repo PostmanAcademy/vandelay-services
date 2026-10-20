@@ -1,0 +1,32 @@
+instances:
+  - url: https://vandelay.docs.buildwithfern.com
+title: Vandelay | Documentation
+navigation:
+  - api: Customers API
+    paginated: true
+    specs:
+      - type: openapi
+        path: openapi/customer-api.yaml
+  - api: Policies API
+    paginated: true
+    specs:
+      - type: openapi
+        path: openapi/policy-api.yaml
+  - api: Claims API
+    paginated: true
+    specs:
+      - type: openapi
+        path: openapi/claims-api.yaml
+  - api: Payments API
+    paginated: true
+    specs:
+      - type: openapi
+        path: openapi/payments-api.yaml
+  - api: Vendors API
+    paginated: true
+    specs:
+      - type: openapi
+        path: openapi/vendors-api.yaml
+colors:
+  accentPrimary: '#ffffff'
+  background: '#000000'

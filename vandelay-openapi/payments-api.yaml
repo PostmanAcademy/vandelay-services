@@ -595,6 +595,9 @@ components:
       properties:
         type: { type: string, enum: [customer, vendor] }
         id: { type: string, example: cus_01HX9K }
+    PaymentRail:
+      type: string
+      enum: [ach, check, card, wire]
     Payment:
       type: object
       required: [id, claimId, type, payee, amount, status, createdAt]
@@ -606,7 +609,7 @@ components:
         paymentMethodId: { type: string, example: pm_3321 }
         amount: { $ref: '#/components/schemas/Money' }
         status: { $ref: '#/components/schemas/PaymentStatus' }
-        method: { type: string, enum: [ach, check, card, wire] }
+        method: { $ref: '#/components/schemas/PaymentRail' }
         invoiceNumber: { type: string }
         memo: { type: string }
         createdAt: { type: string, format: date-time }
